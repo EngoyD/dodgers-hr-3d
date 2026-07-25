@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+data/raw/
+*.log
+assets/dodger_stadium.glb
+assets/ion_token.txt
+.claude/
