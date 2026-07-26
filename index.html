@@ -1832,6 +1832,16 @@ $('detailClose').addEventListener('click', () => {
   applyFilters();
 });
 
+// MLB rotates clip URLs over time — when a cached MP4 404s, fall back to the
+// Savant page, which always re-resolves the current clip location.
+$('dPlayer').addEventListener('error', () => {
+  const pl = $('dPlayer');
+  if (!pl.getAttribute('src')) return;   // ignore deliberate resets
+  pl.style.display = 'none';
+  const vid = $('dVideo');
+  vid.textContent = '▶ Clip moved — watch on Baseball Savant';
+});
+
 renderer.domElement.addEventListener('pointerdown', e => { downXY = [e.clientX, e.clientY]; });
 renderer.domElement.addEventListener('pointerup', e => {
   if (!downXY) return;

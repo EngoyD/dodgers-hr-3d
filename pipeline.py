@@ -206,16 +206,38 @@ def fetch_play_ids(df: pd.DataFrame, cfg) -> dict:
     return out
 
 
-def fetch_video_mp4s(play_ids: dict, cfg) -> dict:
+def fetch_video_mp4s(play_ids: dict, cfg, refresh: bool = False) -> dict:
     """Resolve each Savant playId to its raw MP4 URL (for inline playback).
-    Cached in one JSON so each clip is scraped exactly once."""
+    Cached in one JSON. With refresh=True, HEAD-checks every cached URL and
+    re-scrapes the dead ones — MLB rotates clip URLs over time."""
     import json as _json
     import re
+    from concurrent.futures import ThreadPoolExecutor
     from urllib.request import Request, urlopen
 
     cache_fp = cfg["raw_dir"] / "video_mp4s.json"
     cache = _json.loads(cache_fp.read_text()) if cache_fp.exists() else {}
     pat = re.compile(r'https://sporty-clips\.mlb\.com/[^"\']+\.mp4')
+    UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+
+    if refresh:
+        wanted = {pid for pid in set(play_ids.values()) if cache.get(pid)}
+        def alive(pid):
+            try:
+                req = Request(cache[pid], headers={"User-Agent": UA}, method="HEAD")
+                with urlopen(req, timeout=15) as r:
+                    return pid, r.status == 200
+            except Exception:
+                return pid, False
+        dead = []
+        with ThreadPoolExecutor(8) as ex:
+            for pid, ok in ex.map(alive, sorted(wanted)):
+                if not ok:
+                    dead.append(pid)
+        if dead:
+            print(f"  {len(dead)} cached clip urls rotted — re-resolving")
+            for pid in dead:
+                del cache[pid]
 
     def save():
         tmp = cache_fp.with_suffix(".tmp")
@@ -416,7 +438,7 @@ def main(year: int):
     print("Resolving Savant clips to MP4 urls ...")
     hr_play_ids = {k: v for k, v in play_ids.items()
                    if k in {(int(r.game_pk), int(r.at_bat_number)) for r in usable.itertuples()}}
-    mp4s = fetch_video_mp4s(hr_play_ids, cfg)
+    mp4s = fetch_video_mp4s(hr_play_ids, cfg, refresh=cfg.get("refresh_videos", False))
     no_video = 0
 
     # calibrate
@@ -538,5 +560,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=date.today().year,
                     help="season to build (default: current year)")
+    ap.add_argument("--refresh-videos", action="store_true",
+                    help="HEAD-check cached clip urls, re-resolve dead ones")
     args = ap.parse_args()
+    CONFIG["refresh_videos"] = args.refresh_videos
     main(args.year)
