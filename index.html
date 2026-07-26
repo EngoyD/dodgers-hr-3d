@@ -98,10 +98,16 @@
     <input type="checkbox" id="fHome">
     <span style="font-size:12px">Dodger Stadium HRs only</span>
   </label>
-  <label class="tog" style="text-transform:none;letter-spacing:0">
-    <input type="checkbox" id="fPost">
-    <span style="font-size:12px">Include postseason</span>
-  </label>
+  <label>Season phase</label>
+  <select id="fPhase">
+    <option value="all">Regular + postseason</option>
+    <option value="R">Regular season</option>
+    <option value="PS">Postseason (all rounds)</option>
+    <option value="F">Wild Card</option>
+    <option value="D">Division Series</option>
+    <option value="L">League Championship</option>
+    <option value="W">World Series</option>
+  </select>
 
   <label>Overlay another park's outfield wall</label>
   <select id="fPark"><option value="">None</option></select>
@@ -1443,7 +1449,7 @@ function restoreMaterials(obj) {
 const $ = id => document.getElementById(id);
 const dates = [...new Set(recs.map(r => r.game_date))].sort();
 const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
-  park: '', dimStayed: true, selected: null, homeOnly: false, postseason: false};
+  park: '', dimStayed: true, selected: null, homeOnly: false, phase: 'all'};
 
 // date dropdown: full season, recency windows, calendar months
 {
@@ -1514,8 +1520,10 @@ function applyFilters() {
   let visible = 0, stayed = 0, visibleTotal = 0;
   for (const mesh of tubes) {
     const r = mesh.userData.rec;
-    const pass = r.game_date >= dLo && r.game_date <= dHi &&
-      (!r.postseason || state.postseason) &&
+    const gt = r.game_type || 'R';
+    const phaseOk = state.phase === 'all' ? true :
+      state.phase === 'PS' ? gt !== 'R' : gt === state.phase;
+    const pass = r.game_date >= dLo && r.game_date <= dHi && phaseOk &&
       (!state.homeOnly || r.home_team === 'LAD') &&
       (!state.batter || r.batter_name === state.batter) &&
       (!state.pitcher || r.pitcher_name === state.pitcher) &&
@@ -1571,7 +1579,7 @@ $('fPark').addEventListener('change', e => {
 });
 $('parkToggle').addEventListener('change', e => { state.dimStayed = e.target.checked; applyFilters(); });
 $('fHome').addEventListener('change', e => { state.homeOnly = e.target.checked; applyFilters(); });
-$('fPost').addEventListener('change', e => { state.postseason = e.target.checked; applyFilters(); });
+$('fPhase').addEventListener('change', e => { state.phase = e.target.value; applyFilters(); });
 $('hudHeader').addEventListener('click', () => {
   const hud = $('hud');
   hud.classList.toggle('collapsed');
@@ -1617,6 +1625,9 @@ function showDetail(rec) {
     ['Simulated distance', `${rec.sim_distance_ft.toFixed(0)} ft`],
     ['Apex', `${rec.apex_ft.toFixed(0)} ft`],
     ['Hang time', `${rec.hang_time_s.toFixed(2)} s`],
+    ['Game', (rec.game_type || 'R') === 'R' ? 'Regular season' :
+      ({F: 'Wild Card', D: 'Division Series', L: 'League Championship',
+        W: 'World Series'}[rec.game_type] || rec.game_type)],
     ['Bats', rec.stand],
     ['MLBAM batter / pitcher', `${rec.batter} / ${rec.pitcher}`],
   ];
