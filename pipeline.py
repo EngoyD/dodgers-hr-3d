@@ -134,7 +134,8 @@ def pull_season(cfg) -> tuple[pd.DataFrame, list[str]]:
 # Filter to LAD home runs
 # ----------------------------------------------------------------------------
 def lad_home_runs(df: pd.DataFrame) -> pd.DataFrame:
-    df = df[df["game_type"] == "R"]  # regular season only
+    # regular season + postseason (F=wild card, D=division, L=LCS, W=World Series)
+    df = df[df["game_type"].isin(["R", "F", "D", "L", "W"])]
     hr = df[df["events"] == "home_run"].copy()
 
     # batting team from inning half: Top = away team bats, Bot = home team bats
@@ -366,8 +367,10 @@ def main(year: int):
             print(f"  {r}", file=sys.stderr)
 
     lad = lad_home_runs(df)
+    reg_total = int((lad["game_type"] == "R").sum())
+    ps_total = int((lad["game_type"] != "R").sum())
     season_hr_total = len(lad)
-    print(f"LAD regular-season home runs found: {season_hr_total}")
+    print(f"LAD home runs found: {reg_total} regular season + {ps_total} postseason")
     if season_hr_total == 0:
         raise RuntimeError("Zero LAD home runs after filtering — aborting.")
 
@@ -480,6 +483,8 @@ def main(year: int):
             "away_team": r.away_team,
             "hang_time_s": round((len(pts) - 1) * cfg["dt_s"], 2),
             "apex_ft": round(float(pts[:, 2].max()), 1),
+            "postseason": r.game_type != "R",
+            "game_type": r.game_type,
             "video_url": (f"https://baseballsavant.mlb.com/sporty-videos?playId="
                           f"{play_ids[(int(r.game_pk), int(r.at_bat_number))]}"
                           if (int(r.game_pk), int(r.at_bat_number)) in play_ids else None),
@@ -505,6 +510,8 @@ def main(year: int):
             "pulled_range": [cfg["season_start"].isoformat(), cfg["season_end"].isoformat()],
             "failed_ranges": failed_ranges,
             "season_hr_total": season_hr_total,
+            "regular_hr_total": reg_total,
+            "postseason_hr_total": ps_total,
             "reconstructed": len(records),
             "dropped_missing_data": dropped,
             "calibrated_cd": round(cd, 4),

@@ -98,6 +98,10 @@
     <input type="checkbox" id="fHome">
     <span style="font-size:12px">Dodger Stadium HRs only</span>
   </label>
+  <label class="tog" style="text-transform:none;letter-spacing:0">
+    <input type="checkbox" id="fPost">
+    <span style="font-size:12px">Include postseason</span>
+  </label>
 
   <label>Overlay another park's outfield wall</label>
   <select id="fPark"><option value="">None</option></select>
@@ -1439,7 +1443,7 @@ function restoreMaterials(obj) {
 const $ = id => document.getElementById(id);
 const dates = [...new Set(recs.map(r => r.game_date))].sort();
 const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
-  park: '', dimStayed: true, selected: null, homeOnly: false};
+  park: '', dimStayed: true, selected: null, homeOnly: false, postseason: false};
 
 // date dropdown: full season, recency windows, calendar months
 {
@@ -1511,6 +1515,7 @@ function applyFilters() {
   for (const mesh of tubes) {
     const r = mesh.userData.rec;
     const pass = r.game_date >= dLo && r.game_date <= dHi &&
+      (!r.postseason || state.postseason) &&
       (!state.homeOnly || r.home_team === 'LAD') &&
       (!state.batter || r.batter_name === state.batter) &&
       (!state.pitcher || r.pitcher_name === state.pitcher) &&
@@ -1566,6 +1571,7 @@ $('fPark').addEventListener('change', e => {
 });
 $('parkToggle').addEventListener('change', e => { state.dimStayed = e.target.checked; applyFilters(); });
 $('fHome').addEventListener('change', e => { state.homeOnly = e.target.checked; applyFilters(); });
+$('fPost').addEventListener('change', e => { state.postseason = e.target.checked; applyFilters(); });
 $('hudHeader').addEventListener('click', () => {
   const hud = $('hud');
   hud.classList.toggle('collapsed');
