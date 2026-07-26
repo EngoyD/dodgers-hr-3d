@@ -63,9 +63,12 @@
 <div id="fatal"></div>
 
 <div id="hud" class="panel">
-  <h1 id="hudHeader">LAD 2026 Home Runs <button id="hudToggle" title="collapse">▾</button></h1>
+  <h1 id="hudHeader"><span id="hudTitle">LAD Home Runs</span> <button id="hudToggle" title="collapse">▾</button></h1>
   <div id="hudBody">
   <div class="sub" id="meta">loading…</div>
+
+  <label>Season</label>
+  <select id="fSeason"></select>
 
   <label>Camera</label>
   <div class="camrow">
@@ -174,8 +177,12 @@ try {
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
+const SEASON = (() => {
+  const s = new URLSearchParams(location.search).get('season');
+  return /^\d{4}$/.test(s || '') ? s : '2026';
+})();
 const CFG = {
-  dataUrl: 'data/trajectories.json',
+  dataUrl: `data/trajectories_${SEASON}.json`,
   tubeRadiusFt: 0.65,
   bloom: { strength: 0.45, radius: 0.25, threshold: 0 },
   // Colormap: inferno clipped to [0.25, 1]. Inferno is perceptually uniform
@@ -425,6 +432,30 @@ try { data = await loadData(); }
 catch (err) { fatal(err.message, err); throw err; }
 
 const meta = data.meta, recs = data.trajectories;
+document.getElementById('hudTitle').textContent = `LAD ${SEASON} Home Runs`;
+document.title = `LAD ${SEASON} Home Runs — 3D Trajectories`;
+
+// season selector: list only the seasons whose data files exist
+(async () => {
+  const sel = document.getElementById('fSeason');
+  const years = [];
+  for (let y = 2026; y >= 2015; y--) years.push(y);
+  const checks = await Promise.all(years.map(async y => {
+    try { return (await fetch(`data/trajectories_${y}.json`, {method: 'HEAD'})).ok ? y : null; }
+    catch { return null; }
+  }));
+  for (const y of checks.filter(Boolean)) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y;
+    sel.appendChild(o);
+  }
+  sel.value = SEASON;
+  sel.addEventListener('change', e => {
+    const u = new URL(location.href);
+    u.searchParams.set('season', e.target.value);
+    location.href = u.toString();
+  });
+})();
 
 document.getElementById('meta').textContent =
   `${meta.reconstructed}/${meta.season_hr_total} HRs reconstructed` +

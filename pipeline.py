@@ -351,8 +351,13 @@ def calibrate_cd(df: pd.DataFrame, cfg) -> tuple[float, float, float, float]:
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def main():
-    cfg = CONFIG
+def main(year: int):
+    cfg = dict(CONFIG)
+    today = date.today()
+    cfg["season_start"] = date(year, 3, 1)
+    cfg["season_end"] = min(date(year, 11, 15), today - timedelta(days=1))
+    cfg["out_path"] = Path(f"data/trajectories_{year}.json")
+    print(f"=== Season {year}: {cfg['season_start']} .. {cfg['season_end']} ===")
     df, failed_ranges = pull_season(cfg)
     print(f"\nTotal Statcast rows pulled: {len(df)}")
     if failed_ranges:
@@ -495,7 +500,7 @@ def main():
 
     out = {
         "meta": {
-            "season": 2026,
+            "season": year,
             "team": "LAD",
             "pulled_range": [cfg["season_start"].isoformat(), cfg["season_end"].isoformat()],
             "failed_ranges": failed_ranges,
@@ -522,4 +527,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--year", type=int, default=date.today().year,
+                    help="season to build (default: current year)")
+    args = ap.parse_args()
+    main(args.year)

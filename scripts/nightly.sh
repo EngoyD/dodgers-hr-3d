@@ -3,7 +3,7 @@
 set -e
 cd /Users/dbrr/Dodgers
 .venv/bin/python pipeline.py
-git add data/trajectories.json
+git add data/trajectories_*.json
 if ! git diff --cached --quiet; then
   git commit -m "data: nightly Statcast refresh $(date +%F)
 
