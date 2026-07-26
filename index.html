@@ -52,7 +52,7 @@
   .camrow{display:flex;gap:6px;margin-top:4px}
   .camrow button{cursor:pointer;padding:5px 4px;font-size:11.5px}
   .camrow button:hover{border-color:var(--accent);color:#fff}
-  input[type=range]{width:100%;accent-color:var(--accent);margin:2px 0}
+  input[type=range]{width:100%;accent-color:var(--red);margin:2px 0}
   #dateLabel{font-size:11.5px;color:var(--text);text-align:center;margin-top:2px}
   #parkNote{font-size:11.5px;color:#ffb84d;margin-top:6px;min-height:16px}
   .tog{display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer}
@@ -102,6 +102,8 @@
 
   <label>Date range</label>
   <select id="fDate"><option value="all">Full season</option></select>
+  <input type="range" id="dateLo" min="0" max="0" value="0" step="1">
+  <input type="range" id="dateHi" min="0" max="0" value="0" step="1">
   <div id="dateLabel">–</div>
 
   <label>Batter</label>
@@ -1523,6 +1525,15 @@ const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
       o.value = 'm:' + m; o.textContent = MN[m.slice(5)] || m; sel.appendChild(o);
     }
   }
+  const cust = document.createElement('option');
+  cust.value = 'custom'; cust.textContent = 'Custom (sliders)';
+  sel.appendChild(cust);
+
+  const sLo = $('dateLo'), sHi = $('dateHi');
+  sLo.max = sHi.max = dates.length - 1;
+  sHi.value = dates.length - 1;
+  const syncSliders = () => { sLo.value = state.lo; sHi.value = state.hi; };
+
   sel.addEventListener('change', e => {
     const v = e.target.value;
     let lo = 0, hi = dates.length - 1;
@@ -1539,8 +1550,23 @@ const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
         lo = first;
         hi = dates.length - 1 - [...dates].reverse().findIndex(d => d.startsWith(m));
       }
+    } else if (v === 'custom') {
+      lo = state.lo; hi = state.hi;   // keep whatever the sliders say
     }
     state.lo = lo; state.hi = hi;
+    syncSliders();
+    applyFilters();
+  });
+  sLo.addEventListener('input', e => {
+    state.lo = Math.min(+e.target.value, state.hi);
+    e.target.value = state.lo;
+    sel.value = 'custom';
+    applyFilters();
+  });
+  sHi.addEventListener('input', e => {
+    state.hi = Math.max(+e.target.value, state.lo);
+    e.target.value = state.hi;
+    sel.value = 'custom';
     applyFilters();
   });
 }
