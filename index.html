@@ -53,6 +53,19 @@
   .camrow button{cursor:pointer;padding:5px 4px;font-size:11.5px}
   .camrow button:hover{border-color:var(--accent);color:#fff}
   input[type=range]{width:100%;accent-color:var(--red);margin:2px 0}
+  .dualRange{position:relative;height:20px;margin:4px 0 0}
+  .dualRange input[type=range]{position:absolute;inset:0;width:100%;margin:0;height:20px;
+    -webkit-appearance:none;appearance:none;background:none;pointer-events:none}
+  .dualRange input[type=range]::-webkit-slider-runnable-track{height:4px;margin-top:8px;
+    background:#1b4a80;border-radius:2px}
+  .dualRange input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;
+    width:14px;height:14px;border-radius:50%;background:var(--red);border:2px solid #fff;
+    cursor:pointer;margin-top:-5px}
+  .dualRange input[type=range]::-moz-range-track{height:4px;background:#1b4a80;border-radius:2px}
+  .dualRange input[type=range]::-moz-range-thumb{pointer-events:auto;width:12px;height:12px;
+    border-radius:50%;background:var(--red);border:2px solid #fff;cursor:pointer}
+  input[type=date]{background:#0d2a52;color:var(--text);border:1px solid var(--panel-border);
+    border-radius:5px;padding:3px 5px;font-size:11.5px;width:100%;color-scheme:dark}
   #dateLabel{font-size:11.5px;color:var(--text);text-align:center;margin-top:2px}
   #parkNote{font-size:11.5px;color:#ffb84d;margin-top:6px;min-height:16px}
   .tog{display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer}
@@ -102,8 +115,14 @@
 
   <label>Date range</label>
   <select id="fDate"><option value="all">Full season</option></select>
-  <input type="range" id="dateLo" min="0" max="0" value="0" step="1">
-  <input type="range" id="dateHi" min="0" max="0" value="0" step="1">
+  <div class="dualRange">
+    <input type="range" id="dateLo" min="0" max="0" value="0" step="1">
+    <input type="range" id="dateHi" min="0" max="0" value="0" step="1">
+  </div>
+  <div style="display:flex;gap:6px;margin-top:4px">
+    <input type="date" id="dateFrom" title="from">
+    <input type="date" id="dateTo" title="to">
+  </div>
   <div id="dateLabel">–</div>
 
   <label>Batter</label>
@@ -1530,9 +1549,27 @@ const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
   sel.appendChild(cust);
 
   const sLo = $('dateLo'), sHi = $('dateHi');
+  const dFrom = $('dateFrom'), dTo = $('dateTo');
   sLo.max = sHi.max = dates.length - 1;
   sHi.value = dates.length - 1;
-  const syncSliders = () => { sLo.value = state.lo; sHi.value = state.hi; };
+  dFrom.min = dTo.min = dates[0];
+  dFrom.max = dTo.max = dates[dates.length - 1];
+  const syncSliders = () => {
+    sLo.value = state.lo; sHi.value = state.hi;
+    dFrom.value = dates[state.lo]; dTo.value = dates[state.hi];
+  };
+  syncSliders();
+  dFrom.addEventListener('change', e => {
+    const i = dates.findIndex(d => d >= e.target.value);
+    state.lo = Math.min(i < 0 ? dates.length - 1 : i, state.hi);
+    sel.value = 'custom'; syncSliders(); applyFilters();
+  });
+  dTo.addEventListener('change', e => {
+    let i = dates.length - 1;
+    while (i > 0 && dates[i] > e.target.value) i--;
+    state.hi = Math.max(i, state.lo);
+    sel.value = 'custom'; syncSliders(); applyFilters();
+  });
 
   sel.addEventListener('change', e => {
     const v = e.target.value;
@@ -1561,12 +1598,14 @@ const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
     state.lo = Math.min(+e.target.value, state.hi);
     e.target.value = state.lo;
     sel.value = 'custom';
+    dFrom.value = dates[state.lo]; dTo.value = dates[state.hi];
     applyFilters();
   });
   sHi.addEventListener('input', e => {
     state.hi = Math.max(+e.target.value, state.lo);
     e.target.value = state.hi;
     sel.value = 'custom';
+    dFrom.value = dates[state.lo]; dTo.value = dates[state.hi];
     applyFilters();
   });
 }
@@ -1675,6 +1714,50 @@ $('camTop').addEventListener('click', () => setCam('top'));
 $('camFly').addEventListener('click', () => fly.active ? stopFreeRoam() : startFreeRoam());
 
 // ---------------------------------------------------------------------------
+// Flight animation: on selection, a glowing ball flies the arc and the tube
+// lights up behind it (progressive drawRange reveal)
+// ---------------------------------------------------------------------------
+let flight = null;
+const flightBall = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
+  new THREE.MeshBasicMaterial({color: 0xffffff}));
+flightBall.layers.enable(CFG.bloomLayer);
+flightBall.visible = false;
+scene.add(flightBall);
+
+function startFlight(mesh) {
+  endFlight();
+  const rec = mesh.userData.rec;
+  flight = {
+    mesh,
+    total: mesh.geometry.index.count,
+    start: performance.now(),
+    dur: Math.min(Math.max((rec.hang_time_s || 4) * 550, 1600), 4000),
+    pts: rec.points,
+  };
+  mesh.geometry.setDrawRange(0, 0);
+  flightBall.visible = true;
+}
+function endFlight() {
+  if (!flight) return;
+  flight.mesh.geometry.setDrawRange(0, Infinity);
+  flightBall.visible = false;
+  flight = null;
+}
+function flightUpdate() {
+  if (!flight) return;
+  const p = Math.min((performance.now() - flight.start) / flight.dur, 1);
+  const ring = 36;   // indices per tubular segment (6 radial * 2 tris * 3)
+  flight.mesh.geometry.setDrawRange(0, Math.floor(flight.total * p / ring) * ring);
+  const P = flight.pts, f = p * (P.length - 1);
+  const i = Math.min(Math.floor(f), P.length - 2), u = f - i;
+  const a = P[i], b = P[i + 1];
+  flightBall.position.copy(toThree(
+    a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1]),
+    Math.max(a[2] + u * (b[2] - a[2]), 1.5)));
+  if (p >= 1) endFlight();
+}
+
+// ---------------------------------------------------------------------------
 // Picking + detail panel
 // ---------------------------------------------------------------------------
 const raycaster = new THREE.Raycaster();
@@ -1728,6 +1811,7 @@ function showDetail(rec) {
 $('detailClose').addEventListener('click', () => {
   $('detail').style.display = 'none';
   state.selected = null;
+  endFlight();
   const pl = $('dPlayer'); pl.pause(); pl.removeAttribute('src'); pl.load();
   applyFilters();
 });
@@ -1745,8 +1829,10 @@ renderer.domElement.addEventListener('pointerup', e => {
   if (hits.length) {
     state.selected = hits[0].object;
     showDetail(state.selected.userData.rec);
+    startFlight(state.selected);
   } else {
     state.selected = null;
+    endFlight();
     $('detail').style.display = 'none';
     const pl = $('dPlayer'); pl.pause(); pl.removeAttribute('src'); pl.load();
   }
@@ -1769,6 +1855,7 @@ const bgScene = scene.background.clone();
 function animate() {
   requestAnimationFrame(animate);
   flyUpdate();
+  flightUpdate();
   if (!fly.active) controls.update();
   if (gTiles) gTiles.update();
   scene.traverse(darkenNonBloomed);
