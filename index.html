@@ -189,7 +189,7 @@ try {
 // ---------------------------------------------------------------------------
 const SEASON = (() => {
   const s = new URLSearchParams(location.search).get('season');
-  return /^\d{4}$/.test(s || '') ? s : '2026';
+  return s === 'all' ? 'all' : /^\d{4}$/.test(s || '') ? s : '2026';
 })();
 const CFG = {
   dataUrl: `data/trajectories_${SEASON}.json`,
@@ -422,6 +422,33 @@ function clearsWall(rec, park) {
 // Load data
 // ---------------------------------------------------------------------------
 async function loadData() {
+  if (SEASON === 'all') {
+    // merge every season file present — "all" means all seasons in the database
+    const years = [];
+    for (let y = 2015; y <= 2026; y++) years.push(y);
+    const results = await Promise.all(years.map(async y => {
+      try {
+        const r = await fetch(`data/trajectories_${y}.json?t=${Date.now()}`);
+        return r.ok ? await r.json() : null;
+      } catch { return null; }
+    }));
+    const loaded = results.filter(d => d && d.meta && Array.isArray(d.trajectories));
+    if (!loaded.length) throw new Error('No season data files found for "all seasons" mode.');
+    const trajectories = loaded.flatMap(d => d.trajectories);
+    for (const r of trajectories)
+      if (!Array.isArray(r.points) || r.points.length < 2)
+        throw new Error(`Trajectory record ${r.batter_name} ${r.game_date} has no usable points array.`);
+    const yrs = loaded.map(d => d.meta.season).sort();
+    return {meta: {
+      season: 'all',
+      seasons_loaded: yrs,
+      season_hr_total: loaded.reduce((a, d) => a + d.meta.season_hr_total, 0),
+      reconstructed: trajectories.length,
+      dropped_missing_data: loaded.reduce((a, d) => a + (d.meta.dropped_missing_data || 0), 0),
+      failed_ranges: [],
+      pulled_range: [`${yrs[0]}`, `${yrs[yrs.length - 1]}`],
+    }, trajectories};
+  }
   let resp;
   try { resp = await fetch(CFG.dataUrl + '?t=' + Date.now()); }   // bypass cache: nightly data refresh
   catch (err) { throw new Error(`Network error fetching ${CFG.dataUrl}: ${err.message}. Serve over HTTP, not file://`); }
@@ -442,8 +469,10 @@ try { data = await loadData(); }
 catch (err) { fatal(err.message, err); throw err; }
 
 const meta = data.meta, recs = data.trajectories;
-document.getElementById('hudTitle').textContent = `LAD ${SEASON} Home Runs`;
-document.title = `LAD ${SEASON} Home Runs — 3D Trajectories`;
+const seasonLabel = SEASON === 'all'
+  ? `${meta.pulled_range[0]}–${meta.pulled_range[1]}` : SEASON;
+document.getElementById('hudTitle').textContent = `LAD ${seasonLabel} Home Runs`;
+document.title = `LAD ${seasonLabel} Home Runs — 3D Trajectories`;
 
 // season selector: list only the seasons whose data files exist
 (async () => {
@@ -454,7 +483,12 @@ document.title = `LAD ${SEASON} Home Runs — 3D Trajectories`;
     try { return (await fetch(`data/trajectories_${y}.json`, {method: 'HEAD'})).ok ? y : null; }
     catch { return null; }
   }));
-  for (const y of checks.filter(Boolean)) {
+  const avail = checks.filter(Boolean);
+  const allOpt = document.createElement('option');
+  allOpt.value = 'all';
+  allOpt.textContent = `All loaded seasons (${Math.min(...avail)}–${Math.max(...avail)})`;
+  sel.appendChild(allOpt);
+  for (const y of avail) {
     const o = document.createElement('option');
     o.value = y; o.textContent = y;
     sel.appendChild(o);
@@ -467,10 +501,12 @@ document.title = `LAD ${SEASON} Home Runs — 3D Trajectories`;
   });
 })();
 
-document.getElementById('meta').textContent =
-  `${meta.reconstructed}/${meta.season_hr_total} HRs reconstructed` +
-  (meta.dropped_missing_data ? ` (${meta.dropped_missing_data} dropped: missing Statcast data)` : '') +
-  ` · Cd ${meta.calibrated_cd} · calib ${meta.calibration_residual_pct >= 0 ? '+' : ''}${meta.calibration_residual_pct}%`;
+document.getElementById('meta').textContent = SEASON === 'all'
+  ? `${meta.reconstructed}/${meta.season_hr_total} HRs across ${meta.seasons_loaded.length} loaded seasons ` +
+    `(${meta.dropped_missing_data} lack Statcast measurements) — only seasons in the database`
+  : `${meta.reconstructed}/${meta.season_hr_total} HRs reconstructed` +
+    (meta.dropped_missing_data ? ` (${meta.dropped_missing_data} dropped: missing Statcast data)` : '') +
+    ` · Cd ${meta.calibrated_cd} · calib ${meta.calibration_residual_pct >= 0 ? '+' : ''}${meta.calibration_residual_pct}%`;
 if (meta.failed_ranges && meta.failed_ranges.length)
   fatal(`Pipeline reported failed date ranges — data incomplete:\n${meta.failed_ranges.join('\n')}`);
 
@@ -1299,7 +1335,7 @@ function scanStretch(tiles, wrapper) {
     const vecs = rec.points.map(p => toThree(p[0], p[1], Math.max(p[2], 0)));
     mesh.geometry.dispose();
     mesh.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(vecs),
-      Math.min(vecs.length * 2, 200), CFG.tubeRadiusFt, 6, false);
+      tubeSegs(vecs.length), CFG.tubeRadiusFt, 6, false);
     fixed++;
   }
   clearsCache.clear();
@@ -1348,6 +1384,8 @@ document.getElementById('evMax').textContent = evMax.toFixed(1);
 const trajGroup = new THREE.Group();
 scene.add(trajGroup);
 const tubes = [];
+// all-seasons mode renders ~2700 tubes — coarser tessellation keeps it smooth
+const tubeSegs = n => recs.length > 500 ? 80 : Math.min(n * 2, 200);
 // Statcast hit coordinates are noisy; a handful of HRs compute a spray angle a
 // degree or two past the foul line. Every HR was fair — nudge those azimuths
 // back inside the lines (rotation only; distance and shape untouched).
@@ -1386,7 +1424,7 @@ if (wallStretched) console.info(`${wallStretched} HRs stretched past the fence (
 for (const rec of recs) {
   const vecs = rec.points.map(p => toThree(p[0], p[1], Math.max(p[2], 0)));
   const curve = new THREE.CatmullRomCurve3(vecs);
-  const geo = new THREE.TubeGeometry(curve, Math.min(vecs.length * 2, 200), CFG.tubeRadiusFt, 6, false);
+  const geo = new THREE.TubeGeometry(curve, tubeSegs(vecs.length), CFG.tubeRadiusFt, 6, false);
   const t = evMax > evMin ? (rec.launch_speed - evMin) / (evMax - evMin) : 0.5;
   const color = inferno01(t);
   const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color}));
@@ -1410,7 +1448,8 @@ const bloomComposer = new EffectComposer(renderer);
 bloomComposer.renderToScreen = false;
 bloomComposer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight),
-  CFG.bloom.strength, CFG.bloom.radius, CFG.bloom.threshold);
+  recs.length > 500 ? 0.22 : CFG.bloom.strength,   // ~2700 tubes in all-mode would blow out
+  CFG.bloom.radius, CFG.bloom.threshold);
 bloomComposer.addPass(bloomPass);
 
 const mixPass = new ShaderPass(new THREE.ShaderMaterial({
@@ -1461,9 +1500,11 @@ const state = {lo: 0, hi: dates.length - 1, batter: '', pitcher: '', pitch: '',
     const o = document.createElement('option');
     o.value = v; o.textContent = t; sel.appendChild(o);
   }
-  for (const m of [...new Set(dates.map(d => d.slice(0, 7)))]) {
-    const o = document.createElement('option');
-    o.value = 'm:' + m; o.textContent = MN[m.slice(5)] || m; sel.appendChild(o);
+  if (SEASON !== 'all') {
+    for (const m of [...new Set(dates.map(d => d.slice(0, 7)))]) {
+      const o = document.createElement('option');
+      o.value = 'm:' + m; o.textContent = MN[m.slice(5)] || m; sel.appendChild(o);
+    }
   }
   sel.addEventListener('change', e => {
     const v = e.target.value;
@@ -1610,11 +1651,17 @@ function showDetail(rec) {
   } else {
     pl.pause(); pl.removeAttribute('src'); pl.style.display = 'none';
   }
-  if (rec.video_url) {
+  if (rec.video_mp4) {
     vid.href = rec.video_url;
+    vid.textContent = '↗ Open on Baseball Savant';
     vid.style.display = 'block';
-    vid.textContent = rec.video_mp4 ? '↗ Open on Baseball Savant' : '▶ Watch this home run';
-  } else vid.style.display = 'none';
+  } else {
+    // MLB's clip archive starts in 2016 — fall back to a YouTube search
+    const q = encodeURIComponent(`${rec.batter_name} home run ${rec.game_date} ${rec.away_team} ${rec.home_team}`);
+    vid.href = `https://www.youtube.com/results?search_query=${q}`;
+    vid.textContent = '↗ No MLB clip for this one — search YouTube';
+    vid.style.display = 'block';
+  }
   const rows = [
     ['Pitcher', rec.pitcher_name],
     ['Pitch', rec.pitch_type ? `${PITCH_NAMES[rec.pitch_type] || rec.pitch_type} (${rec.release_speed ?? '?'} mph)` : '—'],
@@ -1693,7 +1740,7 @@ animate();
 window.__viewer = {camera, controls, setCam};   // debug/inspection handle
 
 // nightly data watcher: when the pipeline writes fresh trajectories, reload
-setInterval(async () => {
+if (SEASON !== 'all') setInterval(async () => {
   try {
     const r = await fetch(CFG.dataUrl + '?t=' + Date.now());
     if (!r.ok) return;
