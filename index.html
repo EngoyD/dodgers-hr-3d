@@ -71,19 +71,33 @@
   .tog{display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer}
   .tog input{width:auto;accent-color:var(--accent)}
   #count{margin-top:10px;font-size:11.5px;color:var(--dim)}
-  #legend{bottom:12px;left:12px;width:270px;padding:10px 14px}
-  #legend .bar{height:10px;border-radius:3px;margin:6px 0 3px}
-  #legend .lab{display:flex;justify-content:space-between;font-size:11px;color:var(--dim)}
-  #legend .ttl{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
-  #detail{top:12px;right:12px;width:300px;display:none;max-height:calc(100% - 24px);overflow-y:auto}
-  #detail h2{font-size:14px;margin:0 0 2px;color:#fff}
-  #detail .des{font-size:12.5px;color:var(--text);margin:8px 0;padding:8px;background:#101720;
-    border-radius:5px;border-left:3px solid var(--accent)}
+  #legend{bottom:12px;left:12px;width:274px;padding:0}
+  #legend .ttl{font-size:11.5px;color:#fff;text-transform:uppercase;letter-spacing:.05em;
+    font-weight:800;font-style:italic;background:linear-gradient(180deg,var(--db-hi),var(--db));
+    padding:7px 12px;border-radius:9px 9px 0 0;border-bottom:2px solid var(--red)}
+  #legend .bar{height:10px;border-radius:3px;margin:9px 12px 4px}
+  #legend .lab{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
+    margin:0 12px 9px}
+  #detail{top:12px;right:12px;width:304px;display:none;max-height:calc(100% - 24px);
+    overflow-y:auto;padding:0}
+  #detail h2{font-size:13.5px;margin:0;color:#fff;font-weight:800;font-style:italic;
+    text-transform:uppercase;letter-spacing:.02em;
+    background:linear-gradient(180deg,var(--db-hi),var(--db));
+    padding:9px 34px 9px 12px;border-radius:9px 9px 0 0;border-bottom:2px solid var(--red)}
+  #dBody{padding:10px 12px}
+  #detail .sub{background:#0d2a52;border:1px solid var(--panel-border);border-radius:5px;
+    padding:5px 8px;font-weight:700;color:#fff;text-align:center;margin-bottom:8px}
+  #detail .des{font-size:12.5px;color:var(--text);margin:8px 0;padding:8px;background:#0d2a52;
+    border-radius:5px;border-left:3px solid var(--red)}
   #detail table{width:100%;border-collapse:collapse;font-size:12px}
-  #detail td{padding:2.5px 0;vertical-align:top}
-  #detail td:first-child{color:var(--dim);width:44%}
-  #detail .x{position:absolute;top:8px;right:10px;cursor:pointer;color:var(--dim);
-    background:none;border:none;width:auto;font-size:15px}
+  #detail tr{border-bottom:1px solid #12365f}
+  #detail tr:last-child{border-bottom:none}
+  #detail td{padding:4px 0;vertical-align:top}
+  #detail td:first-child{color:var(--dim);width:44%;text-transform:uppercase;
+    font-size:10.5px;letter-spacing:.05em;padding-top:5px}
+  #detail td:last-child{font-weight:700;color:#fff}
+  #detail .x{position:absolute;top:7px;right:8px;cursor:pointer;color:#cfe4ff;
+    background:none;border:none;width:auto;font-size:15px;z-index:2}
   #fatal{display:none;position:fixed;inset:0;z-index:100;background:rgba(5,7,12,.96);
     color:#ff7b72;padding:40px;font:14px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap}
   #fatal b{color:#fff;display:block;font-size:17px;margin-bottom:12px}
@@ -178,6 +192,7 @@
 <div id="detail" class="panel">
   <button class="x" id="detailClose">✕</button>
   <h2 id="dTitle"></h2>
+  <div id="dBody">
   <div class="sub" id="dSub"></div>
   <div class="des" id="dDes"></div>
   <video id="dPlayer" controls preload="metadata" playsinline referrerpolicy="no-referrer"
@@ -186,6 +201,7 @@
     padding:6px 10px;background:#1b3a5e;border:1px solid #2f5f9e;border-radius:5px;
     color:#9fc3f5;text-decoration:none;font-size:12.5px;text-align:center">▶ Watch on Baseball Savant</a>
   <table id="dTable"></table>
+  </div>
 </div>
 
 <script type="importmap">
