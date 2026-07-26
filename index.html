@@ -98,6 +98,13 @@
   #detail td:last-child{font-weight:700;color:#fff}
   #detail .x{position:absolute;top:7px;right:8px;cursor:pointer;color:#cfe4ff;
     background:none;border:none;width:auto;font-size:15px;z-index:2}
+  #muteBtn{width:auto;border:none;background:none;color:#cfe4ff;font-size:13px;
+    cursor:pointer;padding:2px 4px;font-style:normal}
+  #ticker{display:none;position:fixed;top:12px;left:50%;transform:translateX(-50%);
+    z-index:11;background:linear-gradient(180deg,var(--db-hi),var(--db));color:#fff;
+    font:800 italic 14px/1 -apple-system,'Segoe UI',Roboto,sans-serif;
+    padding:10px 22px;border-radius:9px;border-bottom:2px solid var(--red);
+    letter-spacing:.03em;box-shadow:0 4px 18px rgba(0,0,0,.5)}
   #fatal{display:none;position:fixed;inset:0;z-index:100;background:rgba(5,7,12,.96);
     color:#ff7b72;padding:40px;font:14px/1.6 ui-monospace,Menlo,monospace;white-space:pre-wrap}
   #fatal b{color:#fff;display:block;font-size:17px;margin-bottom:12px}
@@ -107,7 +114,9 @@
 <div id="fatal"></div>
 
 <div id="hud" class="panel">
-  <h1 id="hudHeader"><span class="laBadge">LA</span><span id="hudTitle">LAD Home Runs</span> <button id="hudToggle" title="collapse">▾</button></h1>
+  <h1 id="hudHeader"><span class="laBadge">LA</span><span id="hudTitle">LAD Home Runs</span>
+    <button id="muteBtn" title="sound">🔊</button>
+    <button id="hudToggle" title="collapse">▾</button></h1>
   <div id="hudBody">
   <div class="sub" id="meta">loading…</div>
 
@@ -122,6 +131,7 @@
   </div>
   <div class="camrow">
     <button id="camFly">Free roam</button>
+    <button id="camReplay">▶ Replay</button>
   </div>
   <div class="sub" id="flyHint" style="display:none;margin-top:4px">
     WASD/arrows move · Q/E down/up · drag to look · scroll = speed · Shift = fast
@@ -189,7 +199,9 @@
   <div class="lab"><span id="evMin"></span><span id="evMax"></span></div>
 </div>
 
+<div id="ticker"></div>
 <div id="detail" class="panel">
+  <button class="x" id="dShare" style="right:34px;font-size:13px" title="copy link">🔗</button>
   <button class="x" id="detailClose">✕</button>
   <h2 id="dTitle"></h2>
   <div id="dBody">
@@ -1730,47 +1742,180 @@ $('camTop').addEventListener('click', () => setCam('top'));
 $('camFly').addEventListener('click', () => fly.active ? stopFreeRoam() : startFreeRoam());
 
 // ---------------------------------------------------------------------------
-// Flight animation: on selection, a glowing ball flies the arc and the tube
-// lights up behind it (progressive drawRange reveal)
+// Sound: synthesized bat crack + crowd swell scaled by exit velo (no assets)
 // ---------------------------------------------------------------------------
-let flight = null;
-const flightBall = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12),
-  new THREE.MeshBasicMaterial({color: 0xffffff}));
-flightBall.layers.enable(CFG.bloomLayer);
-flightBall.visible = false;
-scene.add(flightBall);
+let audioCtx = null;
+let muted = localStorage.getItem('hrMuted') === '1';
+document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+function ac() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+function playCrack(ev, quiet) {
+  if (muted) return;
+  try {
+    const ctx = ac(), t0 = ctx.currentTime;
+    const nb = ctx.createBuffer(1, 2205, 44100), nd = nb.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1) * Math.exp(-i / 260);
+    const src = ctx.createBufferSource(); src.buffer = nb;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 2300; bp.Q.value = 0.7;
+    const g = ctx.createGain(); g.gain.value = quiet ? 0.15 : 0.5;
+    src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+    src.start(t0);
+    if (quiet) return;
+    const dur = 3.2, cb = ctx.createBuffer(1, 44100 * dur, 44100), cd = cb.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < cd.length; i++) {
+      last = last * 0.995 + (Math.random() * 2 - 1) * 0.045;
+      cd[i] = last;
+    }
+    const cs = ctx.createBufferSource(); cs.buffer = cb;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650;
+    const cg = ctx.createGain();
+    const v = Math.min(Math.max((ev - 95) / 20, 0.15), 0.9) * 0.4;
+    cg.gain.setValueAtTime(0.0001, t0);
+    cg.gain.exponentialRampToValueAtTime(v, t0 + 0.9);
+    cg.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    cs.connect(lp); lp.connect(cg); cg.connect(ctx.destination);
+    cs.start(t0 + 0.15);
+  } catch {}
+}
+document.getElementById('muteBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  muted = !muted;
+  localStorage.setItem('hrMuted', muted ? '1' : '0');
+  e.target.textContent = muted ? '🔇' : '🔊';
+});
 
-function startFlight(mesh) {
-  endFlight();
-  const rec = mesh.userData.rec;
-  flight = {
-    mesh,
-    total: mesh.geometry.index.count,
-    start: performance.now(),
-    dur: Math.min(Math.max((rec.hang_time_s || 4) * 550, 1600), 4000),
-    pts: rec.points,
-  };
+// ---------------------------------------------------------------------------
+// Flight engine: glowing balls fly arcs, tubes ignite behind them.
+// Supports the solo click animation (with incoming-pitch stage) and replay.
+// ---------------------------------------------------------------------------
+let flights = [];
+let selPitchTube = null;
+function newBall(r) {
+  const b = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10),
+    new THREE.MeshBasicMaterial({color: 0xffffff}));
+  b.layers.enable(CFG.bloomLayer);
+  scene.add(b);
+  return b;
+}
+function launchFlight(mesh, opts = {}) {
   mesh.geometry.setDrawRange(0, 0);
-  flightBall.visible = true;
+  flights.push({
+    mesh, ball: newBall(opts.ballR || 2.2),
+    start: performance.now(),
+    dur: opts.dur || 2200,
+    pts: opts.pts || mesh.userData.rec.points,
+    total: mesh.geometry.index.count,
+    minZ: opts.minZ ?? 1.5,
+    replayF: !!opts.replayF,
+    onDone: opts.onDone,
+  });
 }
-function endFlight() {
-  if (!flight) return;
-  flight.mesh.geometry.setDrawRange(0, Infinity);
-  flightBall.visible = false;
-  flight = null;
+function finishFlight(f) {
+  f.mesh.geometry.setDrawRange(0, Infinity);
+  scene.remove(f.ball);
+  f.ball.geometry.dispose();
+  f.ball.material.dispose();
 }
-function flightUpdate() {
-  if (!flight) return;
-  const p = Math.min((performance.now() - flight.start) / flight.dur, 1);
-  const ring = 36;   // indices per tubular segment (6 radial * 2 tris * 3)
-  flight.mesh.geometry.setDrawRange(0, Math.floor(flight.total * p / ring) * ring);
-  const P = flight.pts, f = p * (P.length - 1);
-  const i = Math.min(Math.floor(f), P.length - 2), u = f - i;
-  const a = P[i], b = P[i + 1];
-  flightBall.position.copy(toThree(
-    a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1]),
-    Math.max(a[2] + u * (b[2] - a[2]), 1.5)));
-  if (p >= 1) endFlight();
+function cancelAllFlights() {
+  for (const f of flights) finishFlight(f);
+  flights = [];
+}
+function flightsUpdate() {
+  for (let i = flights.length - 1; i >= 0; i--) {
+    const f = flights[i];
+    const p = Math.min((performance.now() - f.start) / f.dur, 1);
+    const ring = 36;   // indices per tubular segment
+    f.mesh.geometry.setDrawRange(0, Math.floor(f.total * p / ring) * ring);
+    const P = f.pts, ff = p * (P.length - 1);
+    const ii = Math.min(Math.floor(ff), P.length - 2), u = ff - ii;
+    const a = P[ii], b = P[ii + 1];
+    f.ball.position.copy(toThree(
+      a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1]),
+      Math.max(a[2] + u * (b[2] - a[2]), f.minZ)));
+    if (p >= 1) {
+      finishFlight(f);
+      flights.splice(i, 1);
+      if (f.onDone) f.onDone();
+    }
+  }
+}
+
+function clearSolo() {
+  cancelAllFlights();
+  if (selPitchTube) {
+    scene.remove(selPitchTube);
+    selPitchTube.geometry.dispose();
+    selPitchTube.material.dispose();
+    selPitchTube = null;
+  }
+}
+function soloFlight(mesh) {
+  clearSolo();
+  const rec = mesh.userData.rec;
+  const hrLaunch = () => {
+    playCrack(rec.launch_speed);
+    launchFlight(mesh, {dur: Math.min(Math.max((rec.hang_time_s || 4) * 550, 1600), 4000)});
+  };
+  if (rec.pitch_points && rec.pitch_points.length > 3) {
+    // stage 1: the pitch comes in, then contact, then the ball leaves
+    const vecs = rec.pitch_points.map(p => toThree(p[0], p[1], Math.max(p[2], 0.3)));
+    selPitchTube = new THREE.Mesh(
+      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(vecs), 48, 0.3, 5, false),
+      new THREE.MeshBasicMaterial({color: 0x8fd8ff}));
+    selPitchTube.layers.enable(CFG.bloomLayer);
+    scene.add(selPitchTube);
+    launchFlight(selPitchTube, {dur: 620, pts: rec.pitch_points, ballR: 0.9,
+      minZ: 0.3, onDone: hrLaunch});
+  } else {
+    hrLaunch();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Season replay: every visible HR fires chronologically with a date ticker
+// ---------------------------------------------------------------------------
+let replay = null;
+function startReplay() {
+  stopReplay();
+  clearSolo();
+  state.selected = null;
+  $('detail').style.display = 'none';
+  applyFilters();
+  const list = tubes.filter(t => t.visible)
+    .sort((a, b) => a.userData.rec.game_date.localeCompare(b.userData.rec.game_date));
+  if (!list.length) return;
+  for (const m of list) m.geometry.setDrawRange(0, 0);
+  replay = {list, idx: 0, nextAt: performance.now() + 300,
+            stagger: Math.max(Math.min(60000 / list.length, 900), 90)};
+  $('ticker').style.display = 'block';
+  $('camReplay').textContent = '■ Stop';
+}
+function stopReplay() {
+  if (!replay) return;
+  for (const m of replay.list) m.geometry.setDrawRange(0, Infinity);
+  for (let i = flights.length - 1; i >= 0; i--)
+    if (flights[i].replayF) { finishFlight(flights[i]); flights.splice(i, 1); }
+  replay = null;
+  $('ticker').style.display = 'none';
+  $('camReplay').textContent = '▶ Replay';
+}
+function replayUpdate() {
+  if (!replay) return;
+  const now = performance.now();
+  while (replay.idx < replay.list.length && now >= replay.nextAt) {
+    const mesh = replay.list[replay.idx++];
+    const rec = mesh.userData.rec;
+    launchFlight(mesh, {dur: 1400, replayF: true, ballR: 1.8});
+    if (flights.length < 6) playCrack(rec.launch_speed, true);
+    replay.nextAt += replay.stagger;
+    $('ticker').textContent = `${rec.game_date} · HR ${replay.idx} of ${replay.list.length}`;
+  }
+  if (replay.idx >= replay.list.length && !flights.some(f => f.replayF)) stopReplay();
 }
 
 // ---------------------------------------------------------------------------
@@ -1827,10 +1972,35 @@ function showDetail(rec) {
 $('detailClose').addEventListener('click', () => {
   $('detail').style.display = 'none';
   state.selected = null;
-  endFlight();
+  clearSolo();
   const pl = $('dPlayer'); pl.pause(); pl.removeAttribute('src'); pl.load();
+  const u = new URL(location.href);
+  u.searchParams.delete('hr');
+  history.replaceState(null, '', u);
   applyFilters();
 });
+$('dShare').addEventListener('click', async e => {
+  try {
+    await navigator.clipboard.writeText(location.href);
+    e.target.textContent = '✓';
+    setTimeout(() => { e.target.textContent = '🔗'; }, 1200);
+  } catch {}
+});
+$('camReplay').addEventListener('click', () => replay ? stopReplay() : startReplay());
+
+// deep link: ?hr=<game_pk>-<at_bat> selects that homer and flies it
+{
+  const wantHr = new URLSearchParams(location.search).get('hr');
+  if (wantHr) {
+    const m = tubes.find(t => t.userData.rec.id === wantHr);
+    if (m) setTimeout(() => {
+      state.selected = m;
+      showDetail(m.userData.rec);
+      soloFlight(m);
+      applyFilters();
+    }, 1200);
+  }
+}
 
 // MLB rotates clip URLs over time — when a cached MP4 404s, fall back to the
 // Savant page, which always re-resolves the current clip location.
@@ -1853,14 +2023,25 @@ renderer.domElement.addEventListener('pointerup', e => {
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(tubes.filter(t => t.visible), false);
   if (hits.length) {
+    stopReplay();
     state.selected = hits[0].object;
-    showDetail(state.selected.userData.rec);
-    startFlight(state.selected);
+    const rec = state.selected.userData.rec;
+    showDetail(rec);
+    soloFlight(state.selected);
+    if (rec.id) {
+      const u = new URL(location.href);
+      u.searchParams.set('season', SEASON);
+      u.searchParams.set('hr', rec.id);
+      history.replaceState(null, '', u);
+    }
   } else {
     state.selected = null;
-    endFlight();
+    clearSolo();
     $('detail').style.display = 'none';
     const pl = $('dPlayer'); pl.pause(); pl.removeAttribute('src'); pl.load();
+    const u = new URL(location.href);
+    u.searchParams.delete('hr');
+    history.replaceState(null, '', u);
   }
   applyFilters();
 });
@@ -1881,7 +2062,8 @@ const bgScene = scene.background.clone();
 function animate() {
   requestAnimationFrame(animate);
   flyUpdate();
-  flightUpdate();
+  flightsUpdate();
+  replayUpdate();
   if (!fly.active) controls.update();
   if (gTiles) gTiles.update();
   scene.traverse(darkenNonBloomed);
