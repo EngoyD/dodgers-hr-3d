@@ -270,6 +270,55 @@ def fetch_video_mp4s(play_ids: dict, cfg, refresh: bool = False) -> dict:
 # ----------------------------------------------------------------------------
 # Trajectory simulation: quadratic drag + Magnus lift, RK4
 # ----------------------------------------------------------------------------
+def pitch_points(r, n: int = 24):
+    """Reconstruct the incoming pitch path from Statcast's y=50ft kinematic
+    snapshot (vx0..az). Returns [x, y, z] points in the field frame (feet,
+    origin home plate, +x toward CF) from release to the front of the plate."""
+    # Statcast columns arrive as float, numpy NaN, or pandas NA depending on the
+    # season's dtypes. pd.isna handles all three; a bare NaN self-comparison
+    # raises "boolean value of NA is ambiguous" on nullable dtypes.
+    def num(attr, default=None):
+        v = getattr(r, attr, None)
+        if v is None or pd.isna(v):
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    vx0, vy0, vz0 = num("vx0"), num("vy0"), num("vz0")
+    ax, ay, az = num("ax"), num("ay"), num("az")
+    px, pz = num("plate_x"), num("plate_z")
+    vals = [vx0, vy0, vz0, ax, ay, az, px, pz]
+    if any(v is None for v in vals) or vy0 >= 0:
+        return None
+
+    def roots(y_target):
+        a, b, c = 0.5 * ay, vy0, 50.0 - y_target
+        d = b * b - 4 * a * c
+        if d < 0 or abs(a) < 1e-9:
+            return []
+        s = math.sqrt(d)
+        return [(-b - s) / (2 * a), (-b + s) / (2 * a)]
+
+    t_plate = min([t for t in roots(1.417) if t > 0], default=None)
+    ext = num("release_extension", 6.0)
+    t_rel = max([t for t in roots(min(60.5 - ext, 59.0)) if t < 0], default=None)
+    if t_plate is None or t_rel is None:
+        return None
+    # x/z position offsets at y=50 derived from the known plate crossing
+    x50 = px - vx0 * t_plate - 0.5 * ax * t_plate ** 2
+    z50 = pz - vz0 * t_plate - 0.5 * az * t_plate ** 2
+    pts = []
+    for i in range(n):
+        t = t_rel + (t_plate - t_rel) * i / (n - 1)
+        sx = x50 + vx0 * t + 0.5 * ax * t * t          # statcast x: catcher's right
+        sy = 50.0 + vy0 * t + 0.5 * ay * t * t         # statcast y: toward mound
+        sz = z50 + vz0 * t + 0.5 * az * t * t          # up
+        pts.append([round(sy, 2), round(sx, 2), round(max(sz, 0.2), 2)])
+    return pts
+
+
 def backspin_rpm(launch_angle_deg: float, cfg) -> float:
     lo, hi = cfg["backspin_la_lo_deg"], cfg["backspin_la_hi_deg"]
     t = (launch_angle_deg - lo) / (hi - lo)
@@ -507,6 +556,8 @@ def main(year: int):
             "apex_ft": round(float(pts[:, 2].max()), 1),
             "postseason": r.game_type != "R",
             "game_type": r.game_type,
+            "id": f"{int(r.game_pk)}-{int(r.at_bat_number)}",
+            "pitch_points": pitch_points(r),
             "video_url": (f"https://baseballsavant.mlb.com/sporty-videos?playId="
                           f"{play_ids[(int(r.game_pk), int(r.at_bat_number))]}"
                           if (int(r.game_pk), int(r.at_bat_number)) in play_ids else None),
